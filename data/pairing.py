@@ -12,6 +12,7 @@ class Pairing:
     color: str | None = None
     opponent_id: int | None = None
     result: Result | None = None
+    played: bool | None = None
 
     def __repr__(self):
         return f'{self.__class__.__name__}({self.color} {self.opponent_id} {self.result})'

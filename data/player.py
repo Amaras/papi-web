@@ -1,8 +1,9 @@
-from functools import total_ordering
+from functools import total_ordering, cached_property
 from logging import Logger
 from dataclasses import dataclass, field
 from contextlib import suppress
 import warnings
+from collections.abc import Iterator
 
 from data.pairing import Pairing
 from common.logger import get_logger
@@ -14,6 +15,7 @@ logger: Logger = get_logger()
 @dataclass
 @total_ordering
 class Player:
+    """The data needed to represent a player in a tournament"""
     ref_id: int
     last_name: str
     first_name: str
@@ -42,19 +44,22 @@ class Player:
     def title_str(self) -> str:
         return str(self.title)
 
-    def compute_points(self, max_round):
-        """Computes and stores the points of the player,
-        from round 1 to round `max_round` (returns None)"""
+    def points_before_round(self, round_index: int) -> float:
+        """Computes the points  of the player before round
+        `round_index`."""
         # NOTE(Amaras) this does not rely on the fact that insertion order
         # is preserved in 3.6+ dict, because I can't be sure insertion order
         # is the correct (increasing) round order
-        self.points = sum(
-                pairing.result.point_value
-                for round_index, pairing in self.pairings.items()
-                # NOTE(Amaras) if you were to include the current round
-                # in the computation, boards regularly change their ordering
-                # during the current round as results are added
-                if round_index < max_round)
+        return sum(
+            pairing.result.point_value
+            for round_id, pairing in self.pairings.items()
+            if round_id < round_index
+        )
+
+    def compute_points(self, max_round):
+        """Computes and stores the points of the player,
+        from round 1 to round `max_round` (returns None)"""
+        self.points = self.points_before_round(max_round)
 
     @staticmethod
     def _points_str(points: float | None) -> str:
@@ -144,6 +149,14 @@ class Player:
         self.handicap_initial_time = initial_time
         self.handicap_increment = increment
         self.handicap_time_modified = time_modified
+
+    def __getitem__(self, round_index) -> Pairing:
+        """Fetches the pairing at the given `round_index`.
+        This index is 1-based, because it's more natural"""
+        try:
+            return self.pairings[round_index]
+        except KeyError:
+            raise IndexError(round_index)
 
     def __le__(self, other):
         # p1 <= p2 calls p1.__le__(p2)

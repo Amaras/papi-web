@@ -136,6 +136,153 @@ class Result(IntEnum):
         return cls.GAIN, cls.DRAW_OR_HPB, cls.LOSS
 
 
+class TRFResult(StrEnum):
+    """The result class from the point of view of the Tournament Report Format"""
+    ZERO_POINT_BYE = "Z"
+    HALF_POINT_BYE = "H"
+    FULL_POINT_BYE = "F"
+    PAIRING_ALLOCATED_BYE = "U"
+    FORFEIT_WIN = "+"
+    FORFEIT_LOSS = "-"
+    UNRATED_WIN = "W"
+    UNRATED_DRAW = "D"
+    UNRATED_LOSS = "L"
+    RATED_WIN = "1"
+    RATED_DRAW = "="
+    RATED_LOSS = "0"
+
+    @classmethod
+    def win(cls):
+        """The usual OTB win"""
+        return cls.RATED_WIN
+
+    @classmethod
+    def loss(cls):
+        """The usual OTB loss"""
+        return cls.RATED_LOSS
+
+    @classmethod
+    def draw(cls):
+        """The usual OTB draw"""
+        return cls.RATED_DRAW
+
+    @classmethod
+    def from_trf(cls, value: str) -> Self:
+        match value.upper():
+            case "Z":
+                return cls.ZERO_POINT_BYE
+            case "H":
+                return cls.HALF_POINT_BYE
+            case "F":
+                return cls.FULL_POINT_BYE
+            case "U":
+                return cls.PAIRING_ALLOCATED_BYE
+            case "+":
+                return cls.FORFEIT_WIN
+            case "-":
+                return cls.FORFEIT_LOSS
+            case "W":
+                return cls.UNRATED_WIN
+            case "D":
+                return cls.UNRATED_DRAW
+            case "L":
+                return cls.UNRATED_LOSS
+            case "1":
+                return cls.RATED_WIN
+            case "=":
+                return cls.RATED_DRAW
+            case "0":
+                return cls.RATED_LOSS
+            case _:
+                raise ValueError(f"Unknown value: {value}")
+
+    def to_trf(self) -> str:
+        return self.value
+
+    def to_papi_result(self) -> Result:
+        match self:
+            case TRFResult.ZERO_POINT_BYE:
+                return Result.NOT_PAIRED
+            case TRFResult.HALF_POINT_BYE | TRFResult.RATED_DRAW | TRFResult.UNRATED_DRAW:
+                return Result.DRAW_OR_HPB
+            case TRFResult.RATED_WIN:
+                return Result.GAIN
+            case TRFResult.RATED_LOSS:
+                return Result.LOSS
+            case TRFResult.UNRATED_LOSS | TRFResult.FORFEIT_LOSS:
+                return Result.FORFEIT_LOSS
+            case TRFResult.FORFEIT_WIN | TRFResult.UNRATED_WIN:
+                return Result.PAB_OR_FORFEIT_GAIN_OR_FPB
+            case TRFResult.FULL_POINT_BYE | TRFResult.PAIRING_ALLOCATED_BYE:
+                return Result.PAB_OR_FORFEIT_GAIN_OR_FPB
+
+    @property
+    def point_value(self) -> float:
+        """The point value according to the default point schema.
+        A win, PAB, or FPB is 1 point.
+        A draw, or HPB is 0.5 points.
+        A loss or ZPB is 0 points."""
+        match self:
+            case TRFResult.ZERO_POINT_BYE:
+                # unscheduled game
+                return 0.0
+            case TRFResult.FORFEIT_LOSS | TRFResult.UNRATED_LOSS | TRFResult.RATED_LOSS:
+                # scheduled game ending in a loss
+                return 0.0
+            case TRFResult.HALF_POINT_BYE:
+                # Unscheduled "draw"
+                return 0.5
+            case TRFResult.UNRATED_DRAW | TRFResult.RATED_DRAW:
+                # scheduled game ending in a draw
+                return 0.5
+            case TRFResult.FORFEIT_WIN | TRFResult.PAIRING_ALLOCATED_BYE | TRFResult.FULL_POINT_BYE:
+                # unscheduled win
+                return 1.0
+            case TRFResult.UNRATED_WIN | TRFResult.RATED_WIN:
+                # scheduled game ending in a win
+                return 1.0
+
+    @property
+    def is_win(self) -> bool:
+        return self in (
+            TRFResult.RATED_WIN, TRFResult.UNRATED_WIN,
+            TRFResult.FORFEIT_WIN
+        )
+
+    @property
+    def is_otb_win(self):
+        return self == TRFResult.RATED_WIN
+
+    @classmethod
+    def player_imputable_results(cls) -> tuple[Self, Self, Self]:
+        return cls.RATED_WIN, cls.RATED_DRAW, cls.RATED_LOSS
+
+    @property
+    def elected_to_play(self) -> bool:
+        return self in (
+            TRFResult.FORFEIT_WIN, TRFResult.PAIRING_ALLOCATED_BYE,
+            TRFResult.UNRATED_WIN, TRFResult.RATED_WIN,
+            TRFResult.UNRATED_DRAW, TRFResult.RATED_DRAW,
+            TRFResult.UNRATED_LOSS, TRFResult.RATED_LOSS
+            )
+
+    def adjusted_result(self, left_tournament: bool) -> float:
+        match self:
+            case TRFResult.FULL_POINT_BYE | TRFResult.PAIRING_ALLOCATED_BYE:
+                # C07.7 16.2.1
+                return self.point_value
+            case TRFResult.FORFEIT_WIN | TRFResult.FORFEIT_LOSS:
+                # C07.7 16.2.2 and 16.2.4
+                return self.point_value
+            case TRFResult.ZERO_POINT_BYE | TRFResult.HALF_POINT_BYE:
+                if left_tournament:
+                    # C07.7 16.2.5
+                    return TRFResult.RATED_DRAW.point_value
+                else:
+                    # C07.7 16.2.3
+                    return self.point_value
+
+
 class TournamentType(IntEnum):
     """An enumeration representing the supported types of tournaments."""
     UNKNOWN = 0

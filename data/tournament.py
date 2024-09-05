@@ -79,6 +79,7 @@ class Tournament:
 
     @property
     def pairing(self) -> TournamentPairing:
+        """The pairing system used."""
         self.read_database()
         return self._pairing
 
@@ -149,6 +150,12 @@ class Tournament:
                 return False
 
     def read_database(self):
+        """Reads data from the database and performs several operations:
+        1. computes the current round of the tournament
+        2. fetches the illegal moves for the current round
+        3. Computes the points for each player
+        4. builds the boards for displaying them.
+        """
         if self._database_read:
             return
         if self.file and self.file.exists():
@@ -178,7 +185,7 @@ class Tournament:
             }
             for player in self._players_by_id.values():
                 if player.id != 1:
-                    color, opponent_id, result = player.pairings[round_]
+                    color, opponent_id, result = player[round_]
                     if color in ['W', 'B', ]:
                         round_infos[round_]['pairings_found'] = True
                         paired_rounds.append(round_)
@@ -204,69 +211,52 @@ class Tournament:
             # real points
             player.compute_points(self._current_round)
             # virtual points
-            player.vpoints = 0.0
+            vpoints = 0
             if self._pairing == TournamentPairing.HALEY:
                 if self._current_round <= 2:
                     if player.rating >= self._rating_limit1:
-                        player.add_vpoints(1.0)
+                        vpoints = 1.0
             elif self._pairing == TournamentPairing.HALEY_SOFT:
                 # Round 1: All players above rating_limit1 get 1 vpoint
                 # Round 2: All players above rating_limit1 get 1 vpoint
                 # Round 2: All other players get .5 vpoints
                 # bottom of page #138 on
                 # https://dna.ffechecs.fr/wp-content/uploads/sites/2/2023/10/Livre-arbitre-octobre-2023.pdf,
-                # please remove if OK
                 if self._current_round <= 2:
                     if player.rating >= self.rating_limit1:
-                        player.add_vpoints(1.0)
+                        vpoints = 1.0
                     else:
                         if self._current_round == 2:
-                            player.add_vpoints(0.5)
+                            vpoints = 0.5
             elif self._pairing == TournamentPairing.SAD:
                 # À l'appariement de l'avant-dernière ronde, les points
                 # fictifs sont retirés et le système devient un système
                 # Suisse intégral.
                 if self._current_round <= self._rounds - 2:
-                    # En début de tournoi, les joueurs du groupe A ont
-                    # deux points fictifs (PF = 2), ceux du groupe B un
-                    # point fictif (PF = 1), ceux du groupe C aucun point
-                    # fictif (PF = 0)
+                    # In general, each time a player earns 1.5 points
+                    # during the tournament, their virtual point capital
+                    # raises by 0.5 point.
+                    # No player can have more than 2 virtual points.
+                    # Initially, the players are divided (by rating) into
+                    # 3 groups (A, B and C, in decreasing rating order).
+                    # A get a 2-point capital, B get a 1-point capital
+                    # C get no point.
+                    # If a player gets at least half of the maximum score,
+                    # their virtual point capital is raised to 2.
+
+                    # NOTE(Amaras) Interestingly, __floordiv__ is implemented
+                    # on `float`, which drastically simplifies the
+                    # computation.
+                    vpoint_potential = 0.5 * self.score // 1.5
                     if player.rating >= self._rating_limit1:
-                        player.add_vpoints(2.0)
+                        vpoints = 2.0
                     elif player.rating >= self._rating_limit2:
-                        player.add_vpoints(1.0)
-                    if player.rating < self._rating_limit1:
-                        # Lorsqu'un joueur des groupes B ou C marque
-                        # sur l'échiquier au moins 1,5 point, son capital
-                        # fictif augmente de 0,5 point.
-                        if player.points >= 1.5:
-                            player.add_vpoints(0.5)
-                        # Lorsque ce joueur marque sur l'échiquier son
-                        # troisième point, son capital fictif augmente une
-                        # nouvelle fois de 0,5 point.
-                        if player.points >= 3:
-                            player.add_vpoints(0.5)
-                        if player.rating < self._rating_limit2:
-                            # Lorsqu'un joueur du groupe C marque sur
-                            # l'échiquier au moins 4,5 points, son capital
-                            # fictif augmente pour la troisième fois de
-                            # 0,5 point.
-                            if player.points >= 4.5:
-                                player.add_vpoints(0.5)
-
-                            # Lorsqu'un joueur du groupe C marque sur
-                            # l'échiquier au moins 6 points, son capital
-                            # fictif augmente pour la dernière fois de
-                            # 0,5 points (maximum de 2 points fictifs)
-                            if player.points >= 6:
-                                player.add_vpoints(0.5)
-
-                        # Le capital fictif est automatiquement porté à 2
-                        # points si le joueur a marqué la moitié des points
-                        # possibles sur l'échiquier (il est sous-évalué par
-                        # le classement ELO)
-                        if player.points * 2 >= self._rounds:
-                            player.vpoints = 2
+                        vpoints = min(2, 1 + vpoint_potential)
+                    elif player.points * 2 >= self._rounds:
+                        vpoints = 2
+                    else:
+                        vpoints = min(2, vpoint_potential)
+            player.vpoints = vpoints
             player.add_vpoints(player.points)
 
     @property
@@ -319,7 +309,7 @@ class Tournament:
         self._boards: list[Board] = []
         self._unpaired_players: list[Player] = []
         for player in self._players_by_id.values():
-            opponent_id = player.pairings[self._current_round].opponent_id
+            opponent_id = player[self._current_round].opponent_id
             if opponent_id in self._players_by_id:
                 player_board: Board | None = None
                 for board in self._boards:
@@ -332,7 +322,7 @@ class Tournament:
                         player_board.white_player = player
                         break
                 if player_board is None:
-                    if player.pairings[self._current_round].color == Color.WHITE:
+                    if player[self._current_round].color == Color.WHITE:
                         self._boards.append(Board(white_player=player))
                     else:
                         self._boards.append(Board(black_player=player))
@@ -345,7 +335,7 @@ class Tournament:
             board.number = number
             board.white_player.set_board(index, number, Color.WHITE)
             board.black_player.set_board(index, number, Color.BLACK)
-            board.result = board.white_player.pairings[self._current_round].result
+            board.result = board.white_player[self._current_round].result
             if self.handicap:
                 strong_player: Player
                 weak_player: Player
